@@ -1,4 +1,4 @@
-use gcp_observability_rs::{ObservabilityClient, gcp_info, gcp_warn, gcp_error, gcp_log};
+use gcp_observability_rs::{ObservabilityClient, LogEntry, MetricData, TraceSpan};
 use std::collections::HashMap;
 use std::time::{SystemTime, Duration};
 
@@ -12,69 +12,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🚀 Starting observability example...");
 
-    // Example 1: Simple logging
-    gcp_info!(client, "Application started successfully")?;
-    gcp_warn!(client, "This is a warning message")?;
-    gcp_error!(client, "This is an error message")?;
+    // Example 1: Simple logging (fire-and-forget)
+    client.send_log(LogEntry::new("INFO", "Application started successfully"))?;
+    client.send_log(LogEntry::new("WARNING", "This is a warning message"))?;
+    client.send_log(LogEntry::new("ERROR", "This is an error message"))?;
 
-    // Example 2: Custom log with service name
+    // Example 2: Custom log with service name using struct
     client.send_log(
-        "INFO".to_string(),
-        "Processing user request".to_string(),
-        Some("user-service".to_string()),
-    ).await?;
+        LogEntry::new("INFO", "Processing user request")
+            .with_service_name("user-service")
+    )?;
 
-    // Example 3: Custom metrics
+    // Example 3: Custom metrics using struct
     let mut labels = HashMap::new();
     labels.insert("environment".to_string(), "development".to_string());
     labels.insert("service".to_string(), "example-service".to_string());
 
     client.send_metric(
-        "custom.googleapis.com/example/requests_total".to_string(),
-        42.0,
-        "INT64".to_string(),
-        "GAUGE".to_string(),
-        Some(labels),
-    ).await?;
+        MetricData::new(
+            "custom.googleapis.com/example/requests_total",
+            42.0,
+            "INT64",
+            "GAUGE"
+        ).with_labels(labels)
+    )?;
 
     client.send_metric(
-        "custom.googleapis.com/example/response_time_ms".to_string(),
-        125.5,
-        "DOUBLE".to_string(),
-        "GAUGE".to_string(),
-        None,
-    ).await?;
+        MetricData::new(
+            "custom.googleapis.com/example/response_time_ms",
+            125.5,
+            "DOUBLE",
+            "GAUGE"
+        )
+    )?;
 
-    // Example 4: Distributed tracing
+    // Example 4: Distributed tracing using struct
     let trace_id = ObservabilityClient::generate_trace_id();
     let span_id = ObservabilityClient::generate_span_id();
     let child_span_id = ObservabilityClient::generate_span_id();
 
     // Parent span
-    client.send_trace_span(
-        trace_id.clone(),
-        span_id.clone(),
-        "HTTP Request".to_string(),
-        SystemTime::now(),
-        Duration::from_millis(150),
-        None,
-    ).await?;
+    client.send_trace(
+        TraceSpan::new(
+            trace_id.clone(),
+            span_id.clone(),
+            "HTTP Request",
+            SystemTime::now(),
+            Duration::from_millis(150)
+        )
+    )?;
 
     // Child span
-    client.send_trace_span(
-        trace_id.clone(),
-        child_span_id,
-        "Database Query".to_string(),
-        SystemTime::now(),
-        Duration::from_millis(50),
-        Some(span_id),
-    ).await?;
+    client.send_trace(
+        TraceSpan::new(
+            trace_id.clone(),
+            child_span_id,
+            "Database Query",
+            SystemTime::now(),
+            Duration::from_millis(50)
+        ).with_parent_span_id(span_id)
+    )?;
 
-    println!("✅ All observability examples completed!");
+    println!("✅ All observability examples queued!");
     println!("📊 Check your Google Cloud Console:");
     println!("   - Logs: https://console.cloud.google.com/logs");
     println!("   - Metrics: https://console.cloud.google.com/monitoring");
     println!("   - Traces: https://console.cloud.google.com/traces");
+
+    // Give the background worker time to process
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok(())
 }
