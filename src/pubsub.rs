@@ -9,8 +9,6 @@ use google_cloud_auth::credentials::CredentialsFile;
 use log::{debug, error, info};
 use serde::Serialize;
 
-use crate::helpers::env_var_getter::EnvVarGetter;
-
 pub struct PubSubsStuff {
     pub publishers: Arc<[(String, Publisher)]>,
     pub subscriptions: Arc<[(String, Subscription)]>,
@@ -174,6 +172,7 @@ impl PubSubsStuff {
         ordering_key: Option<String>,
     ) {
         let publisher = self.get_publisher(topic);
+        let topic_name = topic.to_string();
 
         tokio::spawn(async move {
             match publisher {
@@ -187,11 +186,11 @@ impl PubSubsStuff {
                             publish_time: None,
                         };
                         publisher.publish(message).await;
-                        debug!("Message published to '{}'", topic);
+                        debug!("Message published to '{}'", topic_name);
                     }
                     Err(e) => error!("Failed to serialize payload: {:?}", e),
                 },
-                None => error!("Publisher '{}' not found", topic),
+                None => error!("Publisher '{}' not found", topic_name),
             }
         });
     }
