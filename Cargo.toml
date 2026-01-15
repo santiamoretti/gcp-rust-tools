@@ -1,15 +1,15 @@
 [package]
-name = "gcp-observability-rs"
-version = "0.1.0"
+name = "gcp-rust-tools"
+version = "0.2.0"
 edition = "2021"
-description = "Lightweight Google Cloud Platform observability client using gcloud CLI"
+description = "Comprehensive Google Cloud Platform tools for Rust: Observability (Logs, Metrics, Traces) and PubSub"
 license = "Apache-2.0"
-repository = "https://github.com/your-username/gcp-observability-rs"
-documentation = "https://docs.rs/gcp-observability-rs"
+repository = "https://github.com/santiamoretti/gcp-rust-tools"
+documentation = "https://docs.rs/gcp-rust-tools"
 readme = "README.md"
-keywords = ["gcp", "google-cloud", "observability", "monitoring", "logging"]
+keywords = ["gcp", "google-cloud", "observability", "pubsub", "logging"]
 categories = ["development-tools::debugging", "web-programming"]
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Santiago Amoretti"]
 
 [dependencies]
 serde_json = "1.0"
@@ -19,6 +19,13 @@ lazy_static = "1.4"
 tokio = { version = "1", features = ["process", "fs", "macros", "rt-multi-thread"] }
 crossbeam = "0.8.4"
 async-trait = "0.1.89"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+
+# Google Cloud Official Crates
+google-cloud-pubsub = "0.27.0"
+google-cloud-auth = "0.16.0"
+google-cloud-googleapis = { version = "0.14.0", features = ["pubsub"] }
 
 [features]
 default = ["logging", "monitoring", "tracing"]

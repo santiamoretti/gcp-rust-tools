@@ -131,6 +131,9 @@
 //! - **Bounded Channel**: 1027-item buffer prevents memory overflow
 //! - **Minimal Overhead**: No rate limiting logic or complex synchronization
 
+pub mod helpers;
+pub mod pubsub;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use crossbeam::channel::{bounded, Receiver, Sender};
@@ -178,6 +181,7 @@ pub struct LogEntry {
     pub severity: String,
     pub message: String,
     pub service_name: Option<String>,
+    pub log_name: Option<String>,
 }
 impl LogEntry {
     pub fn new(severity: impl Into<String>, message: impl Into<String>) -> Self {
@@ -185,10 +189,15 @@ impl LogEntry {
             severity: severity.into(),
             message: message.into(),
             service_name: None,
+            log_name: None,
         }
     }
     pub fn with_service_name(mut self, service_name: impl Into<String>) -> Self {
         self.service_name = Some(service_name.into());
+        self
+    }
+    pub fn with_log_name(mut self, log_name: impl Into<String>) -> Self {
+        self.log_name = Some(log_name.into());
         self
     }
 }
@@ -250,7 +259,16 @@ pub struct TraceSpan {
     pub start_time: SystemTime,
     pub duration: Duration,
     pub parent_span_id: Option<String>,
+    pub attributes: HashMap<String, String>,
+    pub status: Option<TraceStatus>,
 }
+
+#[derive(Debug, Clone)]
+pub struct TraceStatus {
+    pub code: i32, // 0=OK, 1=CANCELLED, 2=UNKNOWN, 3=INVALID_ARGUMENT... (using gRPC codes)
+    pub message: Option<String>,
+}
+
 impl TraceSpan {
     pub fn new(
         trace_id: impl Into<String>,
@@ -266,11 +284,36 @@ impl TraceSpan {
             start_time,
             duration,
             parent_span_id: None,
+            attributes: HashMap::new(),
+            status: None,
         }
     }
     pub fn with_parent_span_id(mut self, parent_span_id: impl Into<String>) -> Self {
         self.parent_span_id = Some(parent_span_id.into());
         self
+    }
+    pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.attributes.insert(key.into(), value.into());
+        self
+    }
+    pub fn with_status_error(mut self, message: impl Into<String>) -> Self {
+        self.status = Some(TraceStatus {
+            code: 2, // UNKNOWN (generic error)
+            message: Some(message.into()),
+        });
+        self
+    }
+    pub fn child(&self, name: impl Into<String>, start_time: SystemTime, duration: Duration) -> Self {
+        Self {
+            trace_id: self.trace_id.clone(), // Same trace ID
+            span_id: ObservabilityClient::generate_span_id(), // New span ID
+            parent_span_id: Some(self.span_id.clone()), // Parent is the current span
+            display_name: name.into(),
+            start_time,
+            duration,
+            attributes: HashMap::new(),
+            status: None,
+        }
     }
 }
 #[async_trait]
@@ -301,6 +344,7 @@ impl Handle for SIGTERM {
 pub struct ObservabilityClient {
     project_id: String,
     service_account_path: String,
+    service_name: Option<String>,
     tx: Sender<Box<dyn Handle>>,
 }
 
@@ -308,12 +352,14 @@ impl ObservabilityClient {
     pub async fn new(
         project_id: String,
         service_account_path: String,
+        service_name: Option<String>,
     ) -> Result<Self, ObservabilityError> {
         let (tx, rx): (Sender<Box<dyn Handle>>, Receiver<Box<dyn Handle>>) = bounded(1027);
 
         let client = Self {
             project_id,
             service_account_path,
+            service_name,
             tx,
         };
 
@@ -458,6 +504,41 @@ impl ObservabilityClient {
         Ok(())
     }
 
+    pub async fn get_identity_token(&self) -> Result<String, ObservabilityError> {
+        match self.get_identity_token_internal().await {
+            Ok(token) => Ok(token),
+            Err(e) => {
+                if e.to_string().contains("not logged in")
+                    || e.to_string().contains("authentication")
+                    || e.to_string().contains("expired")
+                {
+                    self.refresh_authentication().await?;
+                    self.get_identity_token_internal().await
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    async fn get_identity_token_internal(&self) -> Result<String, ObservabilityError> {
+        let output = tokio::process::Command::new("gcloud")
+            .args(["auth", "print-identity-token"])
+            .output()
+            .await
+            .map_err(|e| {
+                ObservabilityError::ApiError(format!("Failed to run gcloud command: {}", e))
+            })?;
+        if !output.status.success() {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            return Err(ObservabilityError::AuthenticationError(format!(
+                "Failed to get identity token: {}",
+                error_msg
+            )));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
     async fn get_access_token_with_retry(&self) -> Result<String, ObservabilityError> {
         match self.get_access_token().await {
             Ok(token) => Ok(token),
@@ -587,12 +668,20 @@ impl ObservabilityClient {
             .unwrap()
             .as_secs();
         let mut labels = HashMap::new();
-        if let Some(service) = &log_entry.service_name {
-            labels.insert("service_name".to_string(), service.clone());
+        
+        // Use the entry's service name, fallback to client's default, or ignore
+        if let Some(service) = log_entry.service_name.or(self.service_name.clone()) {
+            labels.insert("service_name".to_string(), service);
         }
+        
+        let log_name = log_entry
+            .log_name
+            .clone()
+            .unwrap_or_else(|| "gcp-observability-rs".to_string());
+
         let log_entry_json = json!({
             "entries": [{
-                "logName": format!("projects/{}/logs/gcp-observability-rs", self.project_id),
+                "logName": format!("projects/{}/logs/{}", self.project_id, log_name),
                 "resource": { "type": "global" },
                 "timestamp": DateTime::<Utc>::from(UNIX_EPOCH + std::time::Duration::from_secs(timestamp))
                     .format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
@@ -642,15 +731,33 @@ impl ObservabilityClient {
         let end_time = trace_span.start_time + trace_span.duration;
         let end_timestamp = DateTime::<Utc>::from(end_time);
 
+        let mut attributes_json = json!({});
+        if !trace_span.attributes.is_empty() {
+            let mut attribute_map = serde_json::Map::new();
+            for (k, v) in trace_span.attributes {
+                attribute_map.insert(k, json!({ "string_value": { "value": v } }));
+            }
+            attributes_json = json!({ "attributeMap": attribute_map });
+        }
+
         let mut span = json!({
             "name": format!("projects/{}/traces/{}/spans/{}", self.project_id, trace_span.trace_id, trace_span.span_id),
             "spanId": trace_span.span_id,
             "displayName": { "value": trace_span.display_name },
             "startTime": start_timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-            "endTime": end_timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+            "endTime": end_timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            "attributes": attributes_json
         });
+
         if let Some(parent_id) = &trace_span.parent_span_id {
             span["parentSpanId"] = json!(parent_id);
+        }
+
+        if let Some(status) = &trace_span.status {
+            span["status"] = json!({
+                "code": status.code,
+                "message": status.message
+            });
         }
 
         let spans_payload = json!({ "spans": [span] });

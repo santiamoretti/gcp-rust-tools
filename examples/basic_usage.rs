@@ -8,6 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ObservabilityClient::new(
         "your-gcp-project-id".to_string(),
         "/path/to/service-account.json".to_string(),
+        Some("my-default-service".to_string()),
     ).await?;
 
     println!("🚀 Starting observability example...");

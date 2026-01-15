@@ -7,7 +7,7 @@ A lightweight, high-performance Google Cloud Platform observability library for 
 
 ## Builder notes
 
-This crate was devoloped by Santiago Amoretti in the context of the devlopment of Genevabm(https://genevabm.com) after facing multiple issue mainly caused by Googles inhability to provide good crates and APIS to interact with its services. 
+This crate was devoloped by [Santiago Amoretti](https://github.com/santiamoretti) in the context of the devlopment of Genevabm(https://genevabm.com) after facing multiple issue mainly caused by Googles inhability to provide good crates and APIS to interact with its services. 
 
 We are used to this idea of using crates to do work that, under the hood, just concist of the most simple way of communication beetween services: A plain HTTP hit. When this happens, i would argue its much better to generate your own structure than to use existing ones. Thats what i did. I figured out the JSON structures, interacted with GCP from the command line and created a single threaded model which is taylor made for microservices. 
 
@@ -35,7 +35,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gcp-observability-rs = "0.1.0"
+gcp-observability-rs = "0.1.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
