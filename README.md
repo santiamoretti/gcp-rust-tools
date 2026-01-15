@@ -1,33 +1,22 @@
-# GCP Observability for Rust
+# GCP Rust Tools
 
-[![Crates.io](https://img.shields.io/crates/v/gcp-observability-rs.svg)](https://crates.io/crates/gcp-observability-rs)
-[![Documentation](https://docs.rs/gcp-observability-rs/badge.svg)](https://docs.rs/gcp-observability-rs)
+[![Crates.io](https://img.shields.io/crates/v/gcp-rust-tools.svg)](https://crates.io/crates/gcp-rust-tools)
+[![Documentation](https://docs.rs/gcp-rust-tools/badge.svg)](https://docs.rs/gcp-rust-tools)
 
-A lightweight, high-performance Google Cloud Platform observability library for Rust applications. Provides easy-to-use APIs for Cloud Logging, Cloud Monitoring, and Cloud Trace with a background worker for non-blocking operations.
+A comprehensive Rust toolset for Google Cloud Platform, combining simplified Observability (Logs, Metrics, Traces) with robust Pub/Sub wrappers.
 
 ## Builder notes
 
-This crate was devoloped by [Santiago Amoretti](https://github.com/santiamoretti) in the context of the devlopment of Genevabm(https://genevabm.com) after facing multiple issue mainly caused by Googles inhability to provide good crates and APIS to interact with its services. 
-
-We are used to this idea of using crates to do work that, under the hood, just concist of the most simple way of communication beetween services: A plain HTTP hit. When this happens, i would argue its much better to generate your own structure than to use existing ones. Thats what i did. I figured out the JSON structures, interacted with GCP from the command line and created a single threaded model which is taylor made for microservices. 
-
-You can use what i did. You could also modify it to extend its behaviour. Maybe, youll just benefit from the idea of knowing that most of this APIS are high level and intricated for no reason, which makes a good argument for creating your own stuff. 
-
-
-## This documentation is AI generated. Not the code, tho. So rest assured. 
-
+This crate was developed by [Santiago Amoretti](https://github.com/santiamoretti) in the context of the development of Genevabm(https://genevabm.com).
 
 ## Features
 
-- **🚀 Non-Blocking**: Fire-and-forget API with background processing
-- **📝 Cloud Logging**: Send structured logs to Google Cloud Logging
-- **📊 Cloud Monitoring**: Create custom metrics in Google Cloud Monitoring  
-- **🔍 Cloud Trace**: Create distributed traces in Google Cloud Trace
-- **🔐 Auto Token Refresh**: Automatic handling of gcloud token expiration
-- **⚡ High Performance**: Single-threaded worker with bounded channel
-- **🛡️ Error Resilient**: Automatic retry logic for auth failures
-- **🎯 Builder Pattern**: Fluent API for constructing observability data
-- **🪶 Lightweight**: Uses gcloud CLI for auth, REST APIs for data
+- **🚀 Pub/Sub Integration**: Easy wrapper around official Google Cloud Pub/Sub crates.
+- **📝 Cloud Logging**: Send structured logs to Google Cloud Logging.
+- **📊 Cloud Monitoring**: Create custom metrics in Google Cloud Monitoring.
+- **🔍 Cloud Trace**: Create distributed traces in Google Cloud Trace.
+- **⚡ High Performance**: Designed for efficiency.
+- **🛡️ Error Resilient**: Automatic retry logic.
 
 ## Installation
 
@@ -35,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gcp-observability-rs = "0.1.3"
+gcp-rust-tools = "0.2.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
