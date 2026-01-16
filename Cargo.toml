@@ -1,6 +1,6 @@
 [package]
 name = "gcp-rust-tools"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Comprehensive Google Cloud Platform tools for Rust: Observability (Logs, Metrics, Traces) and PubSub"
 license = "Apache-2.0"

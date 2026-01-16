@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use crate::helpers::gcp_config;
+use google_cloud_auth::credentials::CredentialsFile;
 use google_cloud_googleapis::pubsub::v1::PubsubMessage;
 use google_cloud_pubsub::client::{Client, ClientConfig};
 use google_cloud_pubsub::publisher::Publisher;
 use google_cloud_pubsub::subscription::{Subscription, SubscriptionConfig};
-use google_cloud_auth::credentials::CredentialsFile;
 
 use log::{debug, error, info};
 use serde::Serialize;
@@ -16,21 +17,24 @@ pub struct PubSubsStuff {
 
 impl PubSubsStuff {
     pub async fn new(
-        project_id: String,
-        key_file_path: String,
+        project_id: Option<String>,
         instance_id: &str,
         topics: Arc<[&'static str]>,
         subs: Arc<[&'static str]>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         info!("Initializing PubSub client");
 
-        if key_file_path.is_empty() {
-            return Err("key_file_path is required".into());
-        }
+        let key_file_path = gcp_config::credentials_path_from_env().map_err(|e| {
+            let err: Box<dyn std::error::Error + Send + Sync> = e.into();
+            err
+        })?;
 
-        if project_id.is_empty() {
-            return Err("project_id is required".into());
-        }
+        let project_id = gcp_config::resolve_project_id(project_id)
+            .await
+            .map_err(|e| {
+                let err: Box<dyn std::error::Error + Send + Sync> = e.into();
+                err
+            })?;
 
         info!("Using project_id: '{}'", project_id);
 
@@ -39,10 +43,7 @@ impl PubSubsStuff {
             .iter()
             .map(|name| {
                 (
-                    format!(
-                        "projects/{}/topics/{}-{}",
-                        project_id, name, instance_id
-                    ),
+                    format!("projects/{}/topics/{}-{}", project_id, name, instance_id),
                     *name,
                 )
             })
@@ -53,17 +54,16 @@ impl PubSubsStuff {
             .iter()
             .map(|name| {
                 (
-                    format!(
-                        "projects/{}/subscriptions/{}",
-                        project_id, name
-                    ),
+                    format!("projects/{}/subscriptions/{}", project_id, name),
                     *name,
                 )
             })
             .collect();
 
         let credentials = CredentialsFile::new_from_file(key_file_path).await?;
-        let config = ClientConfig::default().with_credentials(credentials).await?;
+        let config = ClientConfig::default()
+            .with_credentials(credentials)
+            .await?;
         let client = Client::new(config).await?;
 
         /* ---------- Publishers (build → freeze) ---------- */
@@ -120,8 +120,7 @@ impl PubSubsStuff {
             debug!("Created subscription '{}'", name);
         }
 
-        let subscriptions: Arc<[(String, Subscription)]> =
-            Arc::from(subscriptions_vec);
+        let subscriptions: Arc<[(String, Subscription)]> = Arc::from(subscriptions_vec);
 
         info!("PubSub client initialized successfully");
 
@@ -197,11 +196,10 @@ impl PubSubsStuff {
 }
 
 pub async fn create_pubsub_client(
-    project_id: String,
-    key_file_path: String,
+    project_id: Option<String>,
     instance_id: &str,
     topics: Arc<[&'static str]>,
     subs: Arc<[&'static str]>,
 ) -> Result<PubSubsStuff, Box<dyn std::error::Error + Send + Sync>> {
-    PubSubsStuff::new(project_id, key_file_path, instance_id, topics, subs).await
+    PubSubsStuff::new(project_id, instance_id, topics, subs).await
 }

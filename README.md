@@ -63,16 +63,18 @@ The library uses a channel-based architecture for optimal performance:
 ### Fire-and-Forget (Recommended)
 
 ```rust
-use gcp_observability_rs::{ObservabilityClient, LogEntry, MetricData, TraceSpan};
+use gcp_rust_tools::{ObservabilityClient, LogEntry, MetricData, TraceSpan};
 use std::collections::HashMap;
 use std::time::{SystemTime, Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize client (performs authentication)
+    // Credentials are resolved internally from GOOGLE_APPLICATION_CREDENTIALS.
+    // Project id can be provided, or inferred via GOOGLE_CLOUD_PROJECT / gcloud.
     let client = ObservabilityClient::new(
-        "your-project-id".to_string(),
-        "/path/to/service-account.json".to_string(),
+        Some("your-project-id".to_string()),
+        None,
     ).await?;
 
     // Fire-and-forget logging (returns immediately)
@@ -129,7 +131,7 @@ client.send_trace_async(TraceSpan::new(...)).await?;
 ### Using Convenience Macros
 
 ```rust
-use gcp_observability_rs::{gcp_info, gcp_warn, gcp_error};
+use gcp_rust_tools::{gcp_info, gcp_warn, gcp_error};
 
 gcp_info!(client, "User {} logged in", user_id)?;
 gcp_warn!(client, "High memory usage: {}%", usage)?;

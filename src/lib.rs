@@ -10,7 +10,6 @@
 //! - **Cloud Monitoring**: Create custom metrics in Google Cloud Monitoring
 //! - **Cloud Trace**: Create distributed traces in Google Cloud Trace
 //! - **Background Processing**: Fire-and-forget API with background thread processing
-//! - **Async Support**: Optional async methods for awaiting operation completion
 //! - **Automatic Token Refresh**: Handles gcloud token expiration and re-authentication
 //! - **Error Resilience**: Automatic retry logic for authentication failures
 //! - **Builder Pattern**: Fluent API for constructing observability data
@@ -27,16 +26,19 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use gcp_observability_rs::{ObservabilityClient, LogEntry, MetricData, TraceSpan};
+//! use gcp_rust_tools::{ObservabilityClient, LogEntry, MetricData, TraceSpan};
 //! use std::collections::HashMap;
 //! use std::time::{SystemTime, Duration};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Initialize the client (performs authentication)
+//!     // Credentials are resolved internally from GOOGLE_APPLICATION_CREDENTIALS.
+//!     // Project id is resolved from (in order): provided value, GOOGLE_CLOUD_PROJECT,
+//!     // or `gcloud config get-value project`.
 //!     let client = ObservabilityClient::new(
-//!         "your-project-id".to_string(),
-//!         "/path/to/service-account.json".to_string(),
+//!         Some("your-project-id".to_string()),
+//!         None,
 //!     ).await?;
 //!
 //!     // Fire-and-forget logging (returns immediately, processes in background)
@@ -65,7 +67,7 @@
 //!     let trace_id = ObservabilityClient::generate_trace_id();
 //!     let span_id = ObservabilityClient::generate_span_id();
 //!     
-//!     client.send_trace_span(
+//!     client.send_trace(
 //!         TraceSpan::new(
 //!             trace_id,
 //!             span_id,
@@ -77,33 +79,6 @@
 //!
 //!     Ok(())
 //! }
-//! ```
-//!
-//! ## Async Operations
-//!
-//! When you need confirmation that an operation completed successfully, use the async methods:
-//!
-//! ```rust,no_run
-//! # use gcp_observability_rs::{ObservabilityClient, LogEntry};
-//! # async fn example(client: ObservabilityClient) -> Result<(), Box<dyn std::error::Error>> {
-//! // Wait for the operation to complete
-//! client.send_log_async(LogEntry::new("INFO", "Critical operation")).await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Convenience Macros
-//!
-//! For quick logging without constructing `LogEntry` objects:
-//!
-//! ```rust,no_run
-//! # use gcp_observability_rs::{ObservabilityClient, gcp_info, gcp_warn, gcp_error};
-//! # fn example(client: ObservabilityClient) -> Result<(), Box<dyn std::error::Error>> {
-//! gcp_info!(client, "User {} logged in", user_id)?;
-//! gcp_warn!(client, "High memory usage: {}%", usage)?;
-//! gcp_error!(client, "Failed to process request: {}", error)?;
-//! # Ok(())
-//! # }
 //! ```
 //!
 //! ## Error Handling
@@ -303,11 +278,16 @@ impl TraceSpan {
         });
         self
     }
-    pub fn child(&self, name: impl Into<String>, start_time: SystemTime, duration: Duration) -> Self {
+    pub fn child(
+        &self,
+        name: impl Into<String>,
+        start_time: SystemTime,
+        duration: Duration,
+    ) -> Self {
         Self {
-            trace_id: self.trace_id.clone(), // Same trace ID
+            trace_id: self.trace_id.clone(),                  // Same trace ID
             span_id: ObservabilityClient::generate_span_id(), // New span ID
-            parent_span_id: Some(self.span_id.clone()), // Parent is the current span
+            parent_span_id: Some(self.span_id.clone()),       // Parent is the current span
             display_name: name.into(),
             start_time,
             duration,
@@ -350,14 +330,18 @@ pub struct ObservabilityClient {
 
 impl ObservabilityClient {
     pub async fn new(
-        project_id: String,
-        service_account_path: String,
+        project_id: Option<String>,
         service_name: Option<String>,
     ) -> Result<Self, ObservabilityError> {
         let (tx, rx): (Sender<Box<dyn Handle>>, Receiver<Box<dyn Handle>>) = bounded(1027);
 
-        let client = Self {
-            project_id,
+        let service_account_path = helpers::gcp_config::credentials_path_from_env()
+            .map_err(|e| ObservabilityError::SetupError(e))?;
+
+        let mut project_id = project_id.unwrap_or_default();
+
+        let mut client = Self {
+            project_id: project_id.clone(),
             service_account_path,
             service_name,
             tx,
@@ -365,6 +349,14 @@ impl ObservabilityClient {
 
         // Setup auth (left as-is from your original design)
         client.ensure_gcloud_installed().await?;
+
+        if project_id.trim().is_empty() {
+            project_id = helpers::gcp_config::resolve_project_id(None)
+                .await
+                .map_err(|e| ObservabilityError::SetupError(e))?;
+            client.project_id = project_id;
+        }
+
         client.setup_authentication().await?;
         client.verify_authentication().await?;
 
@@ -668,12 +660,12 @@ impl ObservabilityClient {
             .unwrap()
             .as_secs();
         let mut labels = HashMap::new();
-        
+
         // Use the entry's service name, fallback to client's default, or ignore
         if let Some(service) = log_entry.service_name.or(self.service_name.clone()) {
             labels.insert("service_name".to_string(), service);
         }
-        
+
         let log_name = log_entry
             .log_name
             .clone()
@@ -778,4 +770,3 @@ impl ObservabilityClient {
         format!("{:016x}", Uuid::new_v4().as_u128() & 0xFFFFFFFFFFFFFFFF)
     }
 }
-

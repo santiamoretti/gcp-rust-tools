@@ -1,15 +1,15 @@
-use gcp_observability_rs::{ObservabilityClient, LogEntry, MetricData, TraceSpan};
+use gcp_rust_tools::{LogEntry, MetricData, ObservabilityClient, TraceSpan};
 use std::collections::HashMap;
-use std::time::{SystemTime, Duration};
+use std::time::{Duration, SystemTime};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create observability client
     let client = ObservabilityClient::new(
-        "your-gcp-project-id".to_string(),
-        "/path/to/service-account.json".to_string(),
+        Some("your-gcp-project-id".to_string()),
         Some("my-default-service".to_string()),
-    ).await?;
+    )
+    .await?;
 
     println!("🚀 Starting observability example...");
 
@@ -20,8 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 2: Custom log with service name using struct
     client.send_log(
-        LogEntry::new("INFO", "Processing user request")
-            .with_service_name("user-service")
+        LogEntry::new("INFO", "Processing user request").with_service_name("user-service"),
     )?;
 
     // Example 3: Custom metrics using struct
@@ -34,18 +33,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "custom.googleapis.com/example/requests_total",
             42.0,
             "INT64",
-            "GAUGE"
-        ).with_labels(labels)
+            "GAUGE",
+        )
+        .with_labels(labels),
     )?;
 
-    client.send_metric(
-        MetricData::new(
-            "custom.googleapis.com/example/response_time_ms",
-            125.5,
-            "DOUBLE",
-            "GAUGE"
-        )
-    )?;
+    client.send_metric(MetricData::new(
+        "custom.googleapis.com/example/response_time_ms",
+        125.5,
+        "DOUBLE",
+        "GAUGE",
+    ))?;
 
     // Example 4: Distributed tracing using struct
     let trace_id = ObservabilityClient::generate_trace_id();
@@ -53,15 +51,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let child_span_id = ObservabilityClient::generate_span_id();
 
     // Parent span
-    client.send_trace(
-        TraceSpan::new(
-            trace_id.clone(),
-            span_id.clone(),
-            "HTTP Request",
-            SystemTime::now(),
-            Duration::from_millis(150)
-        )
-    )?;
+    client.send_trace(TraceSpan::new(
+        trace_id.clone(),
+        span_id.clone(),
+        "HTTP Request",
+        SystemTime::now(),
+        Duration::from_millis(150),
+    ))?;
 
     // Child span
     client.send_trace(
@@ -70,8 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             child_span_id,
             "Database Query",
             SystemTime::now(),
-            Duration::from_millis(50)
-        ).with_parent_span_id(span_id)
+            Duration::from_millis(50),
+        )
+        .with_parent_span_id(span_id),
     )?;
 
     println!("✅ All observability examples queued!");
