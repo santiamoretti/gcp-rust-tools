@@ -114,7 +114,7 @@ use chrono::{DateTime, Utc};
 use crossbeam::channel::{bounded, Receiver, Sender};
 use serde_json::json;
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
 /// Errors for observability operations
@@ -157,6 +157,9 @@ pub struct LogEntry {
     pub message: String,
     pub service_name: Option<String>,
     pub log_name: Option<String>,
+    pub json_payload: Option<serde_json::Value>,
+    pub labels: Option<HashMap<String, String>>,
+    pub insert_id: Option<String>,
 }
 impl LogEntry {
     pub fn new(severity: impl Into<String>, message: impl Into<String>) -> Self {
@@ -165,14 +168,58 @@ impl LogEntry {
             message: message.into(),
             service_name: None,
             log_name: None,
+            json_payload: None,
+            labels: None,
+            insert_id: None,
         }
     }
+
+    /// Create a structured log entry using Cloud Logging `jsonPayload`.
+    ///
+    /// When `json_payload` is set, the `message` field is not used for the payload.
+    pub fn new_json(severity: impl Into<String>, json_payload: serde_json::Value) -> Self {
+        Self {
+            severity: severity.into(),
+            message: String::new(),
+            service_name: None,
+            log_name: None,
+            json_payload: Some(json_payload),
+            labels: None,
+            insert_id: None,
+        }
+    }
+
     pub fn with_service_name(mut self, service_name: impl Into<String>) -> Self {
         self.service_name = Some(service_name.into());
         self
     }
     pub fn with_log_name(mut self, log_name: impl Into<String>) -> Self {
         self.log_name = Some(log_name.into());
+        self
+    }
+
+    /// Set the Cloud Logging `jsonPayload`.
+    pub fn with_json_payload(mut self, json_payload: serde_json::Value) -> Self {
+        self.json_payload = Some(json_payload);
+        self
+    }
+
+    /// Replace all labels with the provided map.
+    pub fn with_labels(mut self, labels: HashMap<String, String>) -> Self {
+        self.labels = Some(labels);
+        self
+    }
+
+    /// Add a single label (merging with existing labels).
+    pub fn with_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        let labels = self.labels.get_or_insert_with(HashMap::new);
+        labels.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set a custom insertId for deduplication.
+    pub fn with_insert_id(mut self, insert_id: impl Into<String>) -> Self {
+        self.insert_id = Some(insert_id.into());
         self
     }
 }
@@ -655,33 +702,52 @@ impl ObservabilityClient {
     // ---------- The three concrete senders ----------
 
     async fn send_log_impl(&self, log_entry: LogEntry) -> Result<(), ObservabilityError> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let mut labels = HashMap::new();
+        let now = SystemTime::now();
+        let timestamp = DateTime::<Utc>::from(now).to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
 
-        // Use the entry's service name, fallback to client's default, or ignore
-        if let Some(service) = log_entry.service_name.or(self.service_name.clone()) {
-            labels.insert("service_name".to_string(), service);
-        }
+        // Use the entry's service name, fallback to client's default.
+        let resolved_service_name = log_entry.service_name.or(self.service_name.clone());
 
+        // Default log name: service name (so logName becomes projects/{project}/logs/{service}).
+        // If a custom log name is provided, it wins.
         let log_name = log_entry
             .log_name
-            .clone()
-            .unwrap_or_else(|| "gcp-observability-rs".to_string());
+            .or_else(|| resolved_service_name.clone())
+            .unwrap_or_else(|| "default".to_string());
 
-        let log_entry_json = json!({
-            "entries": [{
-                "logName": format!("projects/{}/logs/{}", self.project_id, log_name),
-                "resource": { "type": "global" },
-                "timestamp": DateTime::<Utc>::from(UNIX_EPOCH + std::time::Duration::from_secs(timestamp))
-                    .format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                "severity": log_entry.severity,
-                "textPayload": log_entry.message,
-                "labels": labels
-            }]
+        // Cloud Logging expects the log ID portion to be URL-encoded.
+        let log_name_encoded = urlencoding::encode(&log_name);
+
+        // Merge labels: caller-provided labels + service labels.
+        let mut labels = log_entry.labels.unwrap_or_default();
+        if let Some(service) = resolved_service_name {
+            // Keep the previous label for compatibility, plus a more conventional key.
+            labels.entry("service_name".to_string()).or_insert_with(|| service.clone());
+            labels.entry("service".to_string()).or_insert(service);
+        }
+
+        let insert_id = log_entry.insert_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+        let mut entry = json!({
+            "logName": format!("projects/{}/logs/{}", self.project_id, log_name_encoded),
+            "resource": {
+                "type": "global",
+                "labels": { "project_id": self.project_id }
+            },
+            "timestamp": timestamp,
+            "severity": log_entry.severity,
+            "labels": labels,
+            "insertId": insert_id,
         });
+
+        // Payload: prefer structured jsonPayload if provided.
+        if let Some(json_payload) = log_entry.json_payload {
+            entry["jsonPayload"] = json_payload;
+        } else {
+            entry["textPayload"] = json!(log_entry.message);
+        }
+
+        let log_entry_json = json!({ "entries": [entry] });
         let api_url = "https://logging.googleapis.com/v2/entries:write";
         self.execute_api_request(api_url, &log_entry_json.to_string(), "Logging")
             .await?;

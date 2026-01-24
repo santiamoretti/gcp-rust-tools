@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gcp-rust-tools = "0.2.3"
+gcp-rust-tools = "0.2.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -296,7 +296,7 @@ On a typical development machine:
 
 ```toml
 [dependencies]
-gcp-rust-tools = { version = "0.2.3", features = ["logging", "monitoring"] }
+gcp-rust-tools = { version = "0.2.4", features = ["logging", "monitoring"] }
 ```
 
 Available features:
