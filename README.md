@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gcp-rust-tools = "0.2.0"
+gcp-rust-tools = "0.2.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -34,11 +34,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
    - Cloud Logging API
    - Cloud Monitoring API
    - Cloud Trace API
+    - Pub/Sub API
 
 2. **Service Account JSON** with roles:
    - `roles/logging.logWriter`
    - `roles/monitoring.metricWriter`
    - `roles/cloudtrace.agent`
+    - `roles/pubsub.publisher` (for publishing)
+    - `roles/pubsub.subscriber` (for pulling/streaming subscriptions)
 
 3. **gcloud CLI** (automatically installed if missing)
 
@@ -230,6 +233,48 @@ match client.send_log_async(LogEntry::new("INFO", "Important")).await {
 }
 ```
 
+## Pub/Sub
+
+This crate includes a small convenience wrapper over the official `google-cloud-pubsub` client.
+
+### Naming conventions
+
+- Topics passed in `topics` are expanded to: `projects/{project_id}/topics/{name}-{instance_id}`
+- Subscriptions passed in `subs` are expanded to: `projects/{project_id}/subscriptions/{name}`
+
+### Publish (fire-and-forget)
+
+```rust
+use gcp_rust_tools::pubsub::create_pubsub_client;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let topics: Arc<[&'static str]> = Arc::from(["events"]);
+    let subs: Arc<[&'static str]> = Arc::from(["events-sub"]);
+
+    // Credentials are resolved from GOOGLE_APPLICATION_CREDENTIALS.
+    // Project id is resolved from (in order): provided value, GOOGLE_CLOUD_PROJECT,
+    // or `gcloud config get-value project`.
+    let pubsub = create_pubsub_client(None, "dev", topics, subs).await?;
+
+    pubsub
+        .publish_fire_and_forget(
+            "events",
+            serde_json::json!({"hello": "world"}),
+            None,
+        )
+        .await;
+
+    Ok(())
+}
+```
+
+Notes:
+
+- `publish_fire_and_forget` intentionally does not surface publish errors; it spawns a task and logs failures via `log`.
+- Subscriptions are currently treated primarily as *lookups* (and may need to exist already in GCP with the correct topic binding).
+
 ## Performance
 
 ### Characteristics
@@ -251,7 +296,7 @@ On a typical development machine:
 
 ```toml
 [dependencies]
-gcp-observability-rs = { version = "0.1.0", features = ["logging", "monitoring"] }
+gcp-rust-tools = { version = "0.2.3", features = ["logging", "monitoring"] }
 ```
 
 Available features:
