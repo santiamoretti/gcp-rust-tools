@@ -543,8 +543,38 @@ impl ObservabilityClient {
         Ok(())
     }
 
+    /// Generates a generic identity token for the active account.
+    ///
+    /// This is useful for local/dev workflows. For Cloud Run service-to-service calls,
+    /// prefer [`Self::get_identity_token_for_audience`] so the `aud` claim is scoped
+    /// to the receiving service URL (or configured custom audience).
     pub async fn get_identity_token(&self) -> Result<String, ObservabilityError> {
-        match self.get_identity_token_internal().await {
+        self.get_identity_token_with_retry(None).await
+    }
+
+    /// Generates an identity token whose `aud` claim is bound to `audience`.
+    ///
+    /// Cloud Run private invocation requires this audience-bound token format.
+    pub async fn get_identity_token_for_audience(
+        &self,
+        audience: impl AsRef<str>,
+    ) -> Result<String, ObservabilityError> {
+        let audience = audience.as_ref().trim();
+        if audience.is_empty() {
+            return Err(ObservabilityError::SetupError(
+                "Audience must not be empty".to_string(),
+            ));
+        }
+
+        self.get_identity_token_with_retry(Some(audience.to_string()))
+            .await
+    }
+
+    async fn get_identity_token_with_retry(
+        &self,
+        audience: Option<String>,
+    ) -> Result<String, ObservabilityError> {
+        match self.get_identity_token_internal(audience.clone()).await {
             Ok(token) => Ok(token),
             Err(e) => {
                 if e.to_string().contains("not logged in")
@@ -552,7 +582,7 @@ impl ObservabilityClient {
                     || e.to_string().contains("expired")
                 {
                     self.refresh_authentication().await?;
-                    self.get_identity_token_internal().await
+                    self.get_identity_token_internal(audience).await
                 } else {
                     Err(e)
                 }
@@ -560,14 +590,21 @@ impl ObservabilityClient {
         }
     }
 
-    async fn get_identity_token_internal(&self) -> Result<String, ObservabilityError> {
-        let output = tokio::process::Command::new("gcloud")
-            .args(["auth", "print-identity-token"])
-            .output()
-            .await
-            .map_err(|e| {
-                ObservabilityError::ApiError(format!("Failed to run gcloud command: {}", e))
-            })?;
+    async fn get_identity_token_internal(
+        &self,
+        audience: Option<String>,
+    ) -> Result<String, ObservabilityError> {
+        let mut command = tokio::process::Command::new("gcloud");
+        command.args(["auth", "print-identity-token"]);
+
+        if let Some(audience) = audience {
+            command.arg(format!("--audiences={}", audience));
+        }
+
+        let output = command.output().await.map_err(|e| {
+            ObservabilityError::ApiError(format!("Failed to run gcloud command: {}", e))
+        })?;
+
         if !output.status.success() {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             return Err(ObservabilityError::AuthenticationError(format!(
@@ -575,6 +612,7 @@ impl ObservabilityClient {
                 error_msg
             )));
         }
+
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
