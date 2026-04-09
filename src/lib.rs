@@ -741,7 +741,8 @@ impl ObservabilityClient {
 
     async fn send_log_impl(&self, log_entry: LogEntry) -> Result<(), ObservabilityError> {
         let now = SystemTime::now();
-        let timestamp = DateTime::<Utc>::from(now).to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+        let timestamp =
+            DateTime::<Utc>::from(now).to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
 
         // Use the entry's service name, fallback to client's default.
         let resolved_service_name = log_entry.service_name.or(self.service_name.clone());
@@ -760,11 +761,15 @@ impl ObservabilityClient {
         let mut labels = log_entry.labels.unwrap_or_default();
         if let Some(service) = resolved_service_name {
             // Keep the previous label for compatibility, plus a more conventional key.
-            labels.entry("service_name".to_string()).or_insert_with(|| service.clone());
+            labels
+                .entry("service_name".to_string())
+                .or_insert_with(|| service.clone());
             labels.entry("service".to_string()).or_insert(service);
         }
 
-        let insert_id = log_entry.insert_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let insert_id = log_entry
+            .insert_id
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
 
         let mut entry = json!({
             "logName": format!("projects/{}/logs/{}", self.project_id, log_name_encoded),

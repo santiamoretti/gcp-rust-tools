@@ -239,8 +239,8 @@ This crate includes a small convenience wrapper over the official `google-cloud-
 
 ### Naming conventions
 
-- Topics passed in `topics` are expanded to: `projects/{project_id}/topics/{name}-{instance_id}`
-- Subscriptions passed in `subs` are expanded to: `projects/{project_id}/subscriptions/{name}`
+- Topics passed in `topics` are expanded to: `projects/{project_id}/topics/{name}`
+- Subscriptions passed in `subs` are expanded to: `projects/{project_id}/subscriptions/{name}-{instance_id}`
 
 ### Publish (fire-and-forget)
 
@@ -272,8 +272,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 Notes:
 
-- `publish_fire_and_forget` intentionally does not surface publish errors; it spawns a task and logs failures via `log`.
-- Subscriptions are currently treated primarily as *lookups* (and may need to exist already in GCP with the correct topic binding).
+- `publish_fire_and_forget` spawns a task and waits for Pub/Sub publish ack internally; failures are logged via `log`.
+- Subscription topic binding is inferred by short-name match, `-sub` normalization, or single-topic fallback.
 
 ## Performance
 
@@ -296,7 +296,7 @@ On a typical development machine:
 
 ```toml
 [dependencies]
-gcp-rust-tools = { version = "0.2.5", features = ["logging", "monitoring"] }
+gcp-rust-tools = { version = "0.2.6", features = ["logging", "monitoring"] }
 ```
 
 Available features:

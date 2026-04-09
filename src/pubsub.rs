@@ -7,7 +7,7 @@ use google_cloud_pubsub::client::{Client, ClientConfig};
 use google_cloud_pubsub::publisher::Publisher;
 use google_cloud_pubsub::subscription::{Subscription, SubscriptionConfig};
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::Serialize;
 
 pub struct PubSubsStuff {
@@ -38,23 +38,29 @@ impl PubSubsStuff {
 
         info!("Using project_id: '{}'", project_id);
 
-        // Expand topic names into full topic paths
+        // Expand topic names into full topic paths.
+        // Topics are stable shared resources and should not be instance-suffixed.
         let expanded_topics: Vec<(String, &str)> = topics
             .iter()
-            .map(|name| {
-                (
-                    format!("projects/{}/topics/{}-{}", project_id, name, instance_id),
-                    *name,
-                )
-            })
+            .map(|name| (format!("projects/{}/topics/{}", project_id, name), *name))
             .collect();
 
-        // Expand subscription names into full subscription paths
+        // Expand subscription names into full subscription paths.
+        // Subscriptions can be instance-suffixed so each worker can consume independently.
         let expanded_subs: Vec<(String, &str)> = subs
             .iter()
             .map(|name| {
+                let suffix = instance_id.trim();
+                let full_subscription_name = if suffix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}-{}", name, suffix)
+                };
                 (
-                    format!("projects/{}/subscriptions/{}", project_id, name),
+                    format!(
+                        "projects/{}/subscriptions/{}",
+                        project_id, full_subscription_name
+                    ),
                     *name,
                 )
             })
@@ -83,6 +89,15 @@ impl PubSubsStuff {
         let mut subscriptions_vec = Vec::with_capacity(expanded_subs.len());
 
         for (sub_path, name) in expanded_subs.iter() {
+            let Some(topic_path) = topic_path_for_subscription_name(name, &expanded_topics) else {
+                error!(
+                    "No matching topic path found for subscription short name '{}'. Falling back to client.subscription('{}')",
+                    name, sub_path
+                );
+                subscriptions_vec.push((name.to_string(), client.subscription(sub_path)));
+                continue;
+            };
+
             let sub_config = SubscriptionConfig {
                 push_config: None,
                 ack_deadline_seconds: 10,
@@ -103,14 +118,14 @@ impl PubSubsStuff {
             };
 
             let subscription = match client
-                .create_subscription(sub_path, "", sub_config, None)
+                .create_subscription(sub_path, &topic_path, sub_config, None)
                 .await
             {
                 Ok(sub) => sub,
                 Err(err) => {
                     error!(
-                        "Failed to create subscription '{}': {:?}. Falling back.",
-                        name, err
+                        "Failed to create subscription '{}' for topic '{}': {:?}. Falling back.",
+                        name, topic_path, err
                     );
                     client.subscription(sub_path)
                 }
@@ -184,8 +199,18 @@ impl PubSubsStuff {
                             message_id: String::new(),
                             publish_time: None,
                         };
-                        publisher.publish(message).await;
-                        debug!("Message published to '{}'", topic_name);
+                        let awaiter = publisher.publish(message).await;
+                        match awaiter.get().await {
+                            Ok(message_id) => {
+                                debug!(
+                                    "Message published to '{}' (message_id={})",
+                                    topic_name, message_id
+                                );
+                            }
+                            Err(e) => {
+                                error!("Failed to publish message to '{}': {:?}", topic_name, e);
+                            }
+                        }
                     }
                     Err(e) => error!("Failed to serialize payload: {:?}", e),
                 },
@@ -193,6 +218,38 @@ impl PubSubsStuff {
             }
         });
     }
+}
+
+fn topic_path_for_subscription_name(
+    subscription_short_name: &str,
+    expanded_topics: &[(String, &str)],
+) -> Option<String> {
+    if let Some((path, _)) = expanded_topics
+        .iter()
+        .find(|(_, topic_short_name)| *topic_short_name == subscription_short_name)
+    {
+        return Some(path.clone());
+    }
+
+    let normalized = subscription_short_name
+        .strip_suffix("-sub")
+        .unwrap_or(subscription_short_name);
+    if let Some((path, _)) = expanded_topics
+        .iter()
+        .find(|(_, topic_short_name)| *topic_short_name == normalized)
+    {
+        return Some(path.clone());
+    }
+
+    if expanded_topics.len() == 1 {
+        warn!(
+            "Subscription '{}' did not match topic names; defaulting to the only configured topic '{}'",
+            subscription_short_name, expanded_topics[0].0
+        );
+        return Some(expanded_topics[0].0.clone());
+    }
+
+    None
 }
 
 pub async fn create_pubsub_client(
